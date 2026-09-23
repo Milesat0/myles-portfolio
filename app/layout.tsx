@@ -2,7 +2,14 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://mylesbuilds.vercel.app'),
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL || 'https://mylesbuilds.vercel.app'
+  ),
+
+  verification: {
+    google: 'Ff8LyKV8VzO7mlYhPvk--m6nfL24_st_eLl-WFkhKh4',
+  },
+
   title: 'Myles | Web Developer & Digital Problem Solver',
   description: 'Portfolio of Myles: web development, AI, automation, cybersecurity and digital problem solving.',
   icons: {
