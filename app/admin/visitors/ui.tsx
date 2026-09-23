@@ -1,7 +1,8 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { unsubscribeCurrentPush } from '@/lib/push/client';
 import { ArrowLeft, ExternalLink, Eye, EyeOff, LogOut, Save, Search, Users, ChevronDown, ChevronUp, Clock3, MapPin, Monitor, Activity } from 'lucide-react';
 
 type Visitor = {
@@ -56,7 +57,14 @@ export default function VisitorsManager({ email }: { email: string }) {
     if (res.ok) setTimeline(current => ({ ...current, [id]: json.events || [] }));
     setLoadingTimeline(null);
   }
-  async function logout() { const supabase = createClient(); await supabase.auth.signOut(); window.location.href = '/login'; }
+  async function logout() {
+    await unsubscribeCurrentPush();
+
+    const supabase = createClient();
+    await supabase.auth.signOut();
+
+    window.location.href = '/login';
+  }
   const eventLabel = (event: string) => event.replace(/^project_view:/, 'Viewed ').replaceAll('_', ' ');
 
   return <main className="admin-shell"><div className="admin-grid-bg" />
@@ -67,16 +75,21 @@ export default function VisitorsManager({ email }: { email: string }) {
         {message && <div className="admin-message">{message}</div>}
         <div className="admin-panel visitor-directory-panel">
           <div className="panel-title"><strong>People who have visited</strong><span>updates every 15s</span></div>
-          <div className="visitor-search-wrap"><Search size={16}/><input className="visitor-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search nickname, location, device, page or IP…" /></div>
+          <div className="visitor-search-wrap"><Search size={16}/><input className="visitor-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search nickname, location, device, page or IPâ€¦" /></div>
           <div className="visitor-directory">{filtered.map(v => <article className="visitor-profile-card" key={v.session_id}>
-            <div className="visitor-profile-head"><div><span className="eyebrow">{v.nickname ? 'CUSTOM NAME' : 'UNNAMED VISITOR'}</span><h3>{v.nickname || 'Unnamed visitor'}</h3><p>{v.country}{v.region ? ` · ${v.region}` : ''}{v.city ? ` · ${v.city}` : ''}</p></div><div className="visitor-card-actions"><button className="admin-secondary" onClick={()=>beginNickname(v)}><Save size={14}/> Rename</button><button className="admin-secondary" onClick={()=>toggleTimeline(v.session_id)}>{expanded === v.session_id ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Activity</button></div></div>
-            <div className="visitor-tech-strip"><span><Monitor size={13}/> {v.device} · {v.os} · {v.browser}</span><span><Activity size={13}/> {v.pageview_count} views · {v.interaction_count} interactions</span></div>
-            {editing === v.session_id && <div className="visitor-nickname-editor"><input autoFocus value={nickname} onChange={e=>setNickname(e.target.value)} placeholder="e.g. Restaurant lead, John, Hotel prospect…" maxLength={80}/><button className="admin-primary" disabled={busy} onClick={()=>saveNickname(v.session_id)}><Save size={15}/> Save</button><button className="admin-secondary" onClick={()=>setEditing(null)}>Cancel</button></div>}
+            <div className="visitor-profile-head"><div><span className="eyebrow">{v.nickname ? 'CUSTOM NAME' : 'UNNAMED VISITOR'}</span><h3>{v.nickname || 'Unnamed visitor'}</h3><p>{v.country}{v.region ? ` Â· ${v.region}` : ''}{v.city ? ` Â· ${v.city}` : ''}</p></div><div className="visitor-card-actions"><button className="admin-secondary" onClick={()=>beginNickname(v)}><Save size={14}/> Rename</button><button className="admin-secondary" onClick={()=>toggleTimeline(v.session_id)}>{expanded === v.session_id ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Activity</button></div></div>
+            <div className="visitor-tech-strip"><span><Monitor size={13}/> {v.device} Â· {v.os} Â· {v.browser}</span><span><Activity size={13}/> {v.pageview_count} views Â· {v.interaction_count} interactions</span></div>
+            {editing === v.session_id && <div className="visitor-nickname-editor"><input autoFocus value={nickname} onChange={e=>setNickname(e.target.value)} placeholder="e.g. Restaurant lead, John, Hotel prospectâ€¦" maxLength={80}/><button className="admin-primary" disabled={busy} onClick={()=>saveNickname(v.session_id)}><Save size={15}/> Save</button><button className="admin-secondary" onClick={()=>setEditing(null)}>Cancel</button></div>}
             <div className="visitor-profile-grid"><div><span>FIRST SEEN</span><b>{new Date(v.first_seen).toLocaleString()}</b></div><div><span>LAST SEEN</span><b>{new Date(v.last_seen).toLocaleString()}</b></div><div><span>LAST PAGE</span><b>{v.latest_page}</b></div><div><span>LAST EVENT</span><b>{eventLabel(v.latest_event)}</b></div><div><span>REFRESHES</span><b>{v.visit_count} record{v.visit_count === 1 ? '' : 's'}</b></div><div><span>IP ADDRESS</span><b>{revealed.has(v.session_id) ? (v.ip_full || v.ip_masked || 'Unavailable') : (v.ip_masked || 'Unavailable')}</b>{v.ip_full && <button type="button" onClick={()=>toggleIp(v.session_id)}>{revealed.has(v.session_id) ? <><EyeOff size={12}/> Hide</> : <><Eye size={12}/> Reveal</>}</button>}</div></div>
-            {expanded === v.session_id && <div className="visitor-timeline"><div className="timeline-heading"><span>ACTIVITY TIMELINE</span>{loadingTimeline && <span>loading…</span>}</div>{(timeline[v.session_id] || []).map(e => <div className="timeline-row" key={e.id}><div className="timeline-icon"><Clock3 size={13}/></div><div className="timeline-copy"><b>{eventLabel(e.event)}</b><span>{e.page} · {e.device} · {e.browser}{e.referrer ? ` · from ${e.referrer}` : ''}</span></div><time>{new Date(e.created_at).toLocaleString()}</time></div>)}{!loadingTimeline && timeline[v.session_id] && !timeline[v.session_id].length && <p className="admin-empty">No activity found for this visitor.</p>}</div>}
+            {expanded === v.session_id && <div className="visitor-timeline"><div className="timeline-heading"><span>ACTIVITY TIMELINE</span>{loadingTimeline && <span>loadingâ€¦</span>}</div>{(timeline[v.session_id] || []).map(e => <div className="timeline-row" key={e.id}><div className="timeline-icon"><Clock3 size={13}/></div><div className="timeline-copy"><b>{eventLabel(e.event)}</b><span>{e.page} Â· {e.device} Â· {e.browser}{e.referrer ? ` Â· from ${e.referrer}` : ''}</span></div><time>{new Date(e.created_at).toLocaleString()}</time></div>)}{!loadingTimeline && timeline[v.session_id] && !timeline[v.session_id].length && <p className="admin-empty">No activity found for this visitor.</p>}</div>}
           </article>)}{!filtered.length && <p className="admin-empty">No visitors match that search.</p>}</div>
         </div>
       </section>
     </div>
   </main>;
 }
+
+
+
+
+

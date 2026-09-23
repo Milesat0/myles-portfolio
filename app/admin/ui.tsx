@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import {
+  isCurrentPushSubscriptionActive,
+  unsubscribeCurrentPush,
+} from '@/lib/push/client';
 import { LogOut, Plus, Pencil, Trash2, Save, ExternalLink, LayoutDashboard, BellRing, Users, Eye, MousePointerClick, Activity } from 'lucide-react';
 
 type Row = { id: string; title: string; type: string; desc: string; tags: string[]; accent: string; status: string; details: string; images: string[]; video: string | null; icon: string; sort_order: number };
@@ -20,6 +24,25 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
   const [pushReady, setPushReady] = useState(false);
   const [revealedIps, setRevealedIps] = useState<Set<number>>(new Set());
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncPushState() {
+      const active = await isCurrentPushSubscriptionActive();
+
+      if (!cancelled) {
+        setNotifications(active);
+        setPushReady(active);
+      }
+    }
+
+    syncPushState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const loadAnalytics = async (notify = false) => {
     const res = await fetch('/api/analytics/recent', { cache: 'no-store' }).catch(() => null);
     if (!res?.ok) return;
@@ -28,7 +51,7 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
     const newest = data[0];
     if (notify && newest && newest.id.toString() !== lastSeen && newest.event !== 'pageview') {
       if (notifications && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('Myles Portfolio', { body: `${newest.country} · ${newest.device} · ${newest.event.split('_').join(' ')}` });
+        new Notification('Myles Portfolio', { body: `${newest.country} Â· ${newest.device} Â· ${newest.event.split('_').join(' ')}` });
       }
       setLastSeen(newest.id.toString());
     }
@@ -55,7 +78,10 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
 
   async function enableNotifications() {
     if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) { setMessage('This browser does not support web push notifications.'); return; }
-    const permission = await Notification.requestPermission();
+    let permission = Notification.permission;
+    if (permission !== 'granted') {
+      permission = await Notification.requestPermission();
+    }
     if (permission !== 'granted') { setMessage('Notifications were not enabled.'); return; }
     const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
     if (!publicKey) { setMessage('Push is not configured yet. Add the VAPID public key to the deployment environment.'); return; }
@@ -101,7 +127,17 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
     const res = await fetch(`/api/projects/${id}`, { method:'DELETE' });
     if (res.ok) { setProjects(projects.filter(p => p.id !== id)); if (editing?.id === id) startNew(); }
   }
-  async function logout() { const supabase = createClient(); await supabase.auth.signOut(); window.location.href='/login'; }
+  async function logout() {
+    await unsubscribeCurrentPush();
+
+    setNotifications(false);
+    setPushReady(false);
+
+    const supabase = createClient();
+    await supabase.auth.signOut();
+
+    window.location.href = '/login';
+  }
   const set = (key:string, value:any) => setForm((f:any) => ({...f, [key]:value}));
   const eventLabel = (event: string) => event.replace(/^project_view:/, 'Viewed ').replaceAll('_', ' ');
 
@@ -122,8 +158,8 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
         </div>
 
         <div className="analytics-panels">
-          <div className="admin-panel"><div className="panel-title"><strong>Live activity</strong><span>refreshes every 15s</span></div><div className="activity-list">{events.slice(0, 8).map(e => <div className="activity-row" key={e.id}><div className="activity-dot"/><div className="activity-copy"><b>{eventLabel(e.event)}</b><span>{e.country}{e.city ? ` · ${e.city}` : ''} · {e.device} · {e.browser} · from {e.referrer}</span></div><time>{new Date(e.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>)}{!events.length && <p className="admin-empty">No visitor activity yet. Open the public site in another tab to create your first event.</p>}</div></div>
-          <div className="admin-panel"><div className="panel-title"><strong>Visitors today</strong><span>privacy-conscious signals</span></div><div className="visitor-list">{Array.from(new Map<string, EventRow>(today.filter(e=>e.event==='pageview').map(e=>[e.session_id,e] as [string, EventRow])).values()).slice(0,8).map(e => <div className="visitor-row" key={e.session_id}><div className="visitor-main"><b>{e.country}{e.city ? ` · ${e.city}` : ''}</b><span>{e.device} · {e.os} · {e.browser}</span></div><div><b>{e.referrer}</b><span>{e.page}</span></div><div className="visitor-tech"><span>{revealedIps.has(e.id) ? (e.ip_full || e.ip_masked || 'IP unavailable') : (e.ip_masked || 'IP unavailable')}</span>{e.ip_full && <button type="button" onClick={() => toggleIp(e.id)}>{revealedIps.has(e.id) ? 'Hide' : 'Reveal'}</button>}</div></div>)}{!today.length && <p className="admin-empty">Visitor summaries will appear here once traffic arrives.</p>}</div></div>
+          <div className="admin-panel"><div className="panel-title"><strong>Live activity</strong><span>refreshes every 15s</span></div><div className="activity-list">{events.slice(0, 8).map(e => <div className="activity-row" key={e.id}><div className="activity-dot"/><div className="activity-copy"><b>{eventLabel(e.event)}</b><span>{e.country}{e.city ? ` Â· ${e.city}` : ''} Â· {e.device} Â· {e.browser} Â· from {e.referrer}</span></div><time>{new Date(e.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>)}{!events.length && <p className="admin-empty">No visitor activity yet. Open the public site in another tab to create your first event.</p>}</div></div>
+          <div className="admin-panel"><div className="panel-title"><strong>Visitors today</strong><span>privacy-conscious signals</span></div><div className="visitor-list">{Array.from(new Map<string, EventRow>(today.filter(e=>e.event==='pageview').map(e=>[e.session_id,e] as [string, EventRow])).values()).slice(0,8).map(e => <div className="visitor-row" key={e.session_id}><div className="visitor-main"><b>{e.country}{e.city ? ` Â· ${e.city}` : ''}</b><span>{e.device} Â· {e.os} Â· {e.browser}</span></div><div><b>{e.referrer}</b><span>{e.page}</span></div><div className="visitor-tech"><span>{revealedIps.has(e.id) ? (e.ip_full || e.ip_masked || 'IP unavailable') : (e.ip_masked || 'IP unavailable')}</span>{e.ip_full && <button type="button" onClick={() => toggleIp(e.id)}>{revealedIps.has(e.id) ? 'Hide' : 'Reveal'}</button>}</div></div>)}{!today.length && <p className="admin-empty">Visitor summaries will appear here once traffic arrives.</p>}</div></div>
         </div>
 
         <div className="admin-heading subheading"><div><span className="eyebrow">02 / CONTENT</span><h2>Projects</h2><p>Edit the projects shown on the public portfolio without touching source code.</p></div></div>
@@ -138,10 +174,14 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
               <label className="wide">Details<textarea rows={5} value={form.details} onChange={e=>set('details',e.target.value)}/></label><label className="wide">Icon URL<input value={form.icon} onChange={e=>set('icon',e.target.value)} placeholder="/images/icons/project.png"/></label>
               <label className="wide">Image URLs <span className="hint">one per line</span><textarea rows={4} value={form.images} onChange={e=>set('images',e.target.value)} placeholder="/images/project-01.png"/></label><label className="wide">Demo video URL <span className="hint">optional</span><input value={form.video || ''} onChange={e=>set('video',e.target.value)} placeholder="/images/project-demo.mp4"/></label>
             </div>
-            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy}><Save size={16}/>{busy?'Saving…':'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
+            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy}><Save size={16}/>{busy?'Savingâ€¦':'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
           </div>
         </div>
       </section>
     </div>
   </main>;
 }
+
+
+
+

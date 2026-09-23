@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { unsubscribeCurrentPush } from '@/lib/push/client';
 import { ArrowLeft, ExternalLink, LogOut, Pencil, Plus, Save, Trash2, Upload, X, ChevronUp, ChevronDown, Image as ImageIcon, Film } from 'lucide-react';
 
 type Row = { id: string; title: string; type: string; desc: string; tags: string[]; accent: string; status: string; details: string; images: string[]; video: string | null; icon: string; sort_order: number };
@@ -65,7 +66,14 @@ export default function ProjectsManager({ initialProjects, email }: { initialPro
     const res = await fetch(`/api/projects/${id}`, { method:'DELETE' });
     if (res.ok) { setProjects(projects.filter(p => p.id !== id)); if (editing?.id === id) startNew(); setMessage('Project deleted.'); } else setMessage('Delete failed.');
   }
-  async function logout() { const supabase = createClient(); await supabase.auth.signOut(); window.location.href='/login'; }
+  async function logout() {
+    await unsubscribeCurrentPush();
+
+    const supabase = createClient();
+    await supabase.auth.signOut();
+
+    window.location.href = '/login';
+  }
 
   return <main className="admin-shell"><div className="admin-grid-bg" />
     <header className="admin-topbar"><a href="/" className="admin-logo"><span>&lt;/&gt;</span> MYLES<span className="dot">.</span></a><div className="admin-top-actions"><a href="/" target="_blank"><ExternalLink size={15}/> View site</a><span>{email}</span><button onClick={logout}><LogOut size={15}/> Sign out</button></div></header>
@@ -82,14 +90,19 @@ export default function ProjectsManager({ initialProjects, email }: { initialPro
               <label>Accent<select value={form.accent} onChange={e=>set('accent',e.target.value)}><option value="violet">Violet</option><option value="cyan">Cyan</option><option value="orange">Orange</option></select></label><label>Status<input value={form.status} onChange={e=>set('status',e.target.value)} /></label>
               <label>Tags <span className="hint">comma separated</span><input value={form.tags} onChange={e=>set('tags',e.target.value)} /></label><label>Sort order<input type="number" min="1" value={form.sort_order} onChange={e=>set('sort_order',e.target.value)} /></label>
               <label className="wide">Details<textarea rows={6} value={form.details} onChange={e=>set('details',e.target.value)} /></label>
-              <div className="media-field wide"><div className="media-label"><span>PROJECT ICON</span><span className="hint">PNG, JPG, WEBP</span></div><div className="upload-row"><label className="upload-button"><Upload size={15}/> {uploading ? 'Uploading…' : 'Choose icon'}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={e=>uploadFiles(e.target.files,'icon')} disabled={uploading}/></label>{form.icon && <div className="media-preview icon-preview"><img src={form.icon} alt="Project icon preview"/><button type="button" onClick={()=>set('icon','')} aria-label="Remove icon"><X size={14}/></button></div>}</div><input className="media-url" value={form.icon} onChange={e=>set('icon',e.target.value)} placeholder="Or paste an existing icon URL" /></div>
-              <div className="media-field wide"><div className="media-label"><span>PROJECT IMAGES</span><span className="hint">Upload several, then reorder them</span></div><label className="upload-button"><Upload size={15}/> {uploading ? 'Uploading…' : 'Choose images'}<input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={e=>uploadFiles(e.target.files,'image')} disabled={uploading}/></label><div className="media-grid">{form.images.map((src,index)=><div className="media-tile" key={src}><img src={src} alt={`Project screenshot ${index+1}`} /><div className="media-tile-bar"><span>0{index+1}</span><div><button type="button" onClick={()=>moveImage(index,-1)} disabled={index===0} aria-label="Move image up"><ChevronUp size={13}/></button><button type="button" onClick={()=>moveImage(index,1)} disabled={index===form.images.length-1} aria-label="Move image down"><ChevronDown size={13}/></button><button type="button" onClick={()=>removeImage(index)} aria-label="Remove image"><X size={13}/></button></div></div></div>)}</div><input className="media-url" value={form.images.join('\n')} onChange={e=>setForm(f=>({...f,images:e.target.value.split(/\n+/).map(x=>x.trim()).filter(Boolean)}))} placeholder="Or paste image URLs, one per line" /></div>
-              <div className="media-field wide"><div className="media-label"><span>DEMO VIDEO</span><span className="hint">MP4 / WebM</span></div><div className="upload-row"><label className="upload-button"><Film size={15}/> {uploading ? 'Uploading…' : 'Choose video'}<input type="file" accept="video/mp4,video/webm,video/quicktime" onChange={e=>uploadFiles(e.target.files,'video')} disabled={uploading}/></label>{form.video && <div className="video-chip"><Film size={14}/><span>{form.video.split('/').pop()}</span><button type="button" onClick={()=>set('video',null)}><X size={14}/></button></div>}</div><input className="media-url" value={form.video || ''} onChange={e=>set('video',e.target.value)} placeholder="Or paste an existing video URL" /></div>
+              <div className="media-field wide"><div className="media-label"><span>PROJECT ICON</span><span className="hint">PNG, JPG, WEBP</span></div><div className="upload-row"><label className="upload-button"><Upload size={15}/> {uploading ? 'Uploadingâ€¦' : 'Choose icon'}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={e=>uploadFiles(e.target.files,'icon')} disabled={uploading}/></label>{form.icon && <div className="media-preview icon-preview"><img src={form.icon} alt="Project icon preview"/><button type="button" onClick={()=>set('icon','')} aria-label="Remove icon"><X size={14}/></button></div>}</div><input className="media-url" value={form.icon} onChange={e=>set('icon',e.target.value)} placeholder="Or paste an existing icon URL" /></div>
+              <div className="media-field wide"><div className="media-label"><span>PROJECT IMAGES</span><span className="hint">Upload several, then reorder them</span></div><label className="upload-button"><Upload size={15}/> {uploading ? 'Uploadingâ€¦' : 'Choose images'}<input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={e=>uploadFiles(e.target.files,'image')} disabled={uploading}/></label><div className="media-grid">{form.images.map((src,index)=><div className="media-tile" key={src}><img src={src} alt={`Project screenshot ${index+1}`} /><div className="media-tile-bar"><span>0{index+1}</span><div><button type="button" onClick={()=>moveImage(index,-1)} disabled={index===0} aria-label="Move image up"><ChevronUp size={13}/></button><button type="button" onClick={()=>moveImage(index,1)} disabled={index===form.images.length-1} aria-label="Move image down"><ChevronDown size={13}/></button><button type="button" onClick={()=>removeImage(index)} aria-label="Remove image"><X size={13}/></button></div></div></div>)}</div><input className="media-url" value={form.images.join('\n')} onChange={e=>setForm(f=>({...f,images:e.target.value.split(/\n+/).map(x=>x.trim()).filter(Boolean)}))} placeholder="Or paste image URLs, one per line" /></div>
+              <div className="media-field wide"><div className="media-label"><span>DEMO VIDEO</span><span className="hint">MP4 / WebM</span></div><div className="upload-row"><label className="upload-button"><Film size={15}/> {uploading ? 'Uploadingâ€¦' : 'Choose video'}<input type="file" accept="video/mp4,video/webm,video/quicktime" onChange={e=>uploadFiles(e.target.files,'video')} disabled={uploading}/></label>{form.video && <div className="video-chip"><Film size={14}/><span>{form.video.split('/').pop()}</span><button type="button" onClick={()=>set('video',null)}><X size={14}/></button></div>}</div><input className="media-url" value={form.video || ''} onChange={e=>set('video',e.target.value)} placeholder="Or paste an existing video URL" /></div>
             </div>
-            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy || uploading}><Save size={16}/>{busy?'Saving…':'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
+            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy || uploading}><Save size={16}/>{busy?'Savingâ€¦':'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
           </div>
         </div>
       </section>
     </div>
   </main>;
 }
+
+
+
+
+
