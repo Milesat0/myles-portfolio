@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://mylesbuilds.vercel.app'),
   title: 'Myles | Web Developer & Digital Problem Solver',
   description: 'Portfolio of Myles: web development, AI, automation, cybersecurity and digital problem solving.',
   icons: {
@@ -31,3 +31,4 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+
