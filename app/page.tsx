@@ -114,8 +114,8 @@ export default function Home() {
           <h1>I build things<br /><span>worth clicking.</span></h1>
           <p className="hero-text">Web developer, builder and digital problem solver. I turn ideas into clean, useful interfaces, tools and experiments.</p>
           <div className="hero-actions">
-            <button className="button primary" onClick={() => go('work')}>See my work <ArrowUpRight size={18} /></button>
-            <button className="button ghost" onClick={() => { track('cta_work_with_me'); go('contact'); }}>Work with me</button>
+            <a className="button primary" href="#work">See my work <ArrowUpRight size={18} /></a>
+            <a className="button ghost" href="#contact" onClick={() => track('cta_work_with_me')}>Work with me</a>
           </div>
           <div className="mini-stats">
             <div><strong>07+</strong><span>Projects built</span></div>
@@ -246,3 +246,4 @@ export default function Home() {
     </main>
   );
 }
+
