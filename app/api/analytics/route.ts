@@ -204,20 +204,28 @@ export async function POST(request: NextRequest) {
     const { device, browser, os } =
       parseDevice(userAgent);
 
-    const country = (
+    function decodeLocation(value: string | null, fallback = '') {
+      if (!value) return fallback;
+
+      try {
+        return decodeURIComponent(value).slice(0, 120);
+      } catch {
+        return value.slice(0, 120);
+      }
+    }
+
+    const country = decodeLocation(
       request.headers.get('x-vercel-ip-country') ||
-      request.headers.get('cf-ipcountry') ||
-      'Unknown'
+        request.headers.get('cf-ipcountry'),
+      'Unknown',
     ).slice(0, 80);
 
-    const region = (
-      request.headers.get('x-vercel-ip-country-region') ||
-      ''
+    const region = decodeLocation(
+      request.headers.get('x-vercel-ip-country-region'),
     ).slice(0, 120);
 
-    const city = (
-      request.headers.get('x-vercel-ip-city') ||
-      ''
+    const city = decodeLocation(
+      request.headers.get('x-vercel-ip-city'),
     ).slice(0, 120);
 
     const existingSessionId =
