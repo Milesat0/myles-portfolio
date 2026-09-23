@@ -2,6 +2,15 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { requireAdmin } from '@/lib/supabase/server';
 
+function decodeLocation(value: string | null) {
+  if (!value) return value;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 function decryptIp(value: string | null) {
   const raw = process.env.ANALYTICS_IP_ENCRYPTION_KEY;
   if (!raw || !value) return null;
@@ -22,6 +31,6 @@ export async function GET() {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await result.supabase.from('analytics_events').select('id,session_id,page,event,referrer,device,browser,os,country,region,city,ip_encrypted,created_at').gte('created_at', since).order('created_at', { ascending: false }).limit(100);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const rows = (data ?? []).map(row => ({ ...row, ip_full: decryptIp(row.ip_encrypted) }));
+  const rows = (data ?? []).map(row => ({ ...row, country: decodeLocation(row.country), region: decodeLocation(row.region), city: decodeLocation(row.city), ip_full: decryptIp(row.ip_encrypted) }));
   return NextResponse.json(rows);
 }
