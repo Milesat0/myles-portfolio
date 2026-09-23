@@ -60,7 +60,8 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
     const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
     if (!publicKey) { setMessage('Push is not configured yet. Add the VAPID public key to the deployment environment.'); return; }
     try {
-      const registration = await navigator.serviceWorker.register('/push-sw.js');
+      await navigator.serviceWorker.register('/push-sw.js');
+      const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       const subscription = existing || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(publicKey) });
       const res = await fetch('/api/push/subscribe', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ subscription }) });
