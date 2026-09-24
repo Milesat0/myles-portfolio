@@ -3,8 +3,31 @@ import { createClient } from '@supabase/supabase-js';
 import crypto from 'node:crypto';
 import webpush from 'web-push';
 
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+
+type VisitorProfile = {
+  visitor_id: string;
+  nickname: string | null;
+  first_seen: string;
+  last_seen: string;
+  visit_count: number;
+  pageview_count: number;
+  interaction_count: number;
+  latest_page: string;
+  latest_event: string;
+  device: string;
+  browser: string;
+  os: string;
+  country: string;
+  region: string;
+  city: string;
+  ip_encrypted: string | null;
+  ip_masked: string | null;
+};
+
 function parseDevice(userAgent: string) {
   const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+
   const browser = /Edg\//i.test(userAgent)
     ? 'Edge'
     : /Chrome\//i.test(userAgent)
@@ -27,14 +50,21 @@ function parseDevice(userAgent: string) {
             ? 'Linux'
             : 'Other';
 
-  return { device: mobile ? 'Mobile' : 'Desktop', browser, os };
+  return {
+    device: mobile ? 'Mobile' : 'Desktop',
+    browser,
+    os,
+  };
 }
 
 function cleanReferrer(value: string | null) {
   if (!value) return 'Direct';
 
   try {
-    return new URL(value).hostname.replace(/^www\./, '').slice(0, 160);
+    return new URL(value)
+      .hostname
+      .replace(/^www\./, '')
+      .slice(0, 160);
   } catch {
     return 'Other';
   }
@@ -52,28 +82,62 @@ function getClientIp(request: NextRequest) {
 }
 
 function encryptIp(ip: string) {
-  if (!ip || !process.env.ANALYTICS_IP_ENCRYPTION_KEY) return null;
+  if (!ip || !process.env.ANALYTICS_IP_ENCRYPTION_KEY) {
+    return null;
+  }
 
-  const key = Buffer.from(
-    process.env.ANALYTICS_IP_ENCRYPTION_KEY,
-    'base64',
+  try {
+    const key = Buffer.from(
+      process.env.ANALYTICS_IP_ENCRYPTION_KEY,
+      'base64',
+    );
+
+    if (key.length !== 32) {
+      return null;
+    }
+
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv(
+      'aes-256-gcm',
+      key,
+      iv,
+    );
+
+    const ciphertext = Buffer.concat([
+      cipher.update(ip, 'utf8'),
+      cipher.final(),
+    ]);
+
+    const tag = cipher.getAuthTag();
+
+    return `${iv.toString('base64url')}.${tag.toString(
+      'base64url',
+    )}.${ciphertext.toString('base64url')}`;
+  } catch {
+    return null;
+  }
+}
+
+function isUuid(value: string | undefined | null): value is string {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value,
+      ),
   );
+}
 
-  if (key.length !== 32) return null;
+function decodeLocation(
+  value: string | null,
+  fallback = '',
+) {
+  if (!value) return fallback;
 
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-
-  const ciphertext = Buffer.concat([
-    cipher.update(ip, 'utf8'),
-    cipher.final(),
-  ]);
-
-  const tag = cipher.getAuthTag();
-
-  return `${iv.toString('base64url')}.${tag.toString(
-    'base64url',
-  )}.${ciphertext.toString('base64url')}`;
+  try {
+    return decodeURIComponent(value).slice(0, 120);
+  } catch {
+    return value.slice(0, 120);
+  }
 }
 
 function getPushDetails(event: string) {
@@ -147,7 +211,9 @@ async function sendPushIfConfigured(payload: {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       serverKey,
       {
-        auth: { persistSession: false },
+        auth: {
+          persistSession: false,
+        },
       },
     );
 
@@ -180,7 +246,7 @@ async function sendPushIfConfigured(payload: {
       }
     }
   } catch {
-    // Analytics must never block the public site if push is unavailable.
+    // Analytics and push must never block the public site.
   }
 }
 
@@ -204,16 +270,6 @@ export async function POST(request: NextRequest) {
     const { device, browser, os } =
       parseDevice(userAgent);
 
-    function decodeLocation(value: string | null, fallback = '') {
-      if (!value) return fallback;
-
-      try {
-        return decodeURIComponent(value).slice(0, 120);
-      } catch {
-        return value.slice(0, 120);
-      }
-    }
-
     const country = decodeLocation(
       request.headers.get('x-vercel-ip-country') ||
         request.headers.get('cf-ipcountry'),
@@ -221,53 +277,356 @@ export async function POST(request: NextRequest) {
     ).slice(0, 80);
 
     const region = decodeLocation(
-      request.headers.get('x-vercel-ip-country-region'),
+      request.headers.get(
+        'x-vercel-ip-country-region',
+      ),
     ).slice(0, 120);
 
     const city = decodeLocation(
       request.headers.get('x-vercel-ip-city'),
     ).slice(0, 120);
 
-    const existingSessionId =
-      request.cookies.get('myles_visitor')?.value || '';
+    /*
+     * PHASE 3 IDENTITY MODEL
+     *
+     * visitor_id:
+     *   Persistent anonymous browser identity.
+     *
+     * session_id:
+     *   Individual visit. A new session begins after
+     *   30 minutes of inactivity.
+     *
+     * No hardware fingerprinting is used.
+     */
 
-    const sessionId =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        existingSessionId,
-      )
-        ? existingSessionId
-        : crypto.randomUUID();
+    const visitorCookie =
+      request.cookies.get('myles_visitor_id')?.value || '';
 
-    const isNewVisitor = !existingSessionId;
+    const sessionCookie =
+      request.cookies.get('myles_session_id')?.value || '';
+
+    let visitorId = isUuid(visitorCookie)
+      ? visitorCookie
+      : '';
+
+    let sessionId = isUuid(sessionCookie)
+      ? sessionCookie
+      : crypto.randomUUID();
+
+    const hasVisitorCookie = isUuid(visitorCookie);
+    const hadValidSessionCookie = isUuid(sessionCookie);
+
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
 
     const ip = getClientIp(request);
     const ipEncrypted = encryptIp(ip);
 
     const ipLastOctetMasked = ip
       ? ip.includes(':')
-        ? `${ip.slice(0, Math.max(0, ip.length - 4))}…`
-        : ip.replace(/(\d+)(\.\d+)$/, 'xxx$2')
+        ? `${ip.slice(
+            0,
+            Math.max(0, ip.length - 4),
+          )}…`
+        : ip.replace(
+            /(\d+)(\.\d+)$/,
+            'xxx$2',
+          )
       : null;
 
-    const supabase = createClient(
+    const serverKey =
+      process.env.SUPABASE_SECRET_KEY ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!serverKey) {
+      console.error(
+        '[analytics] Supabase server key is missing.',
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            process.env.NODE_ENV === 'development'
+              ? 'Supabase server key is missing'
+              : 'Analytics unavailable',
+        },
+        { status: 500 },
+      );
+    }
+
+    const admin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+      serverKey,
       {
-        auth: { persistSession: false },
+        auth: {
+          persistSession: false,
+        },
       },
     );
 
-    const referrer = cleanReferrer(
-      request.headers.get('referer'),
-    );
+    if (!visitorId) {
+      const legacyVisitorCookie =
+        request.cookies.get('myles_visitor')?.value || '';
 
-    const { error } = await supabase
+      if (isUuid(legacyVisitorCookie)) {
+        const { data: legacyVisitor } = await admin
+          .from('visitor_profiles')
+          .select('visitor_id')
+          .eq('session_id', legacyVisitorCookie)
+          .maybeSingle();
+
+        if (legacyVisitor?.visitor_id) {
+          visitorId = legacyVisitor.visitor_id;
+        }
+      }
+    }
+
+    if (!visitorId) {
+      visitorId = crypto.randomUUID();
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * 1. Resolve the persistent visitor
+     * ----------------------------------------------------------
+     */
+
+    const {
+      data: existingVisitorRaw,
+      error: existingVisitorError,
+    } = await admin
+      .from('visitor_profiles')
+      .select('*')
+      .eq('visitor_id', visitorId)
+      .maybeSingle();
+
+    if (existingVisitorError) {
+      console.error(
+        '[analytics] visitor lookup failed:',
+        existingVisitorError.message,
+        existingVisitorError.code,
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            process.env.NODE_ENV === 'development'
+              ? existingVisitorError.message
+              : 'Analytics unavailable',
+        },
+        { status: 500 },
+      );
+    }
+
+    let visitorProfile =
+      existingVisitorRaw as VisitorProfile | null;
+
+    const visitorWasCreated = !visitorProfile;
+
+    /*
+     * ----------------------------------------------------------
+     * 2. Resolve the current session
+     * ----------------------------------------------------------
+     */
+
+    let sessionIsNew = !hadValidSessionCookie;
+    let existingSessionLastSeen: string | null = null;
+
+    if (hadValidSessionCookie) {
+      const {
+        data: existingSession,
+        error: sessionLookupError,
+      } = await admin
+        .from('visitor_sessions')
+        .select('session_id,visitor_id,last_seen')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+
+      if (sessionLookupError) {
+        console.error(
+          '[analytics] session lookup failed:',
+          sessionLookupError.message,
+          sessionLookupError.code,
+        );
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              process.env.NODE_ENV === 'development'
+                ? sessionLookupError.message
+                : 'Analytics unavailable',
+          },
+          { status: 500 },
+        );
+      }
+
+      if (
+        !existingSession ||
+        existingSession.visitor_id !== visitorId
+      ) {
+        sessionIsNew = true;
+        sessionId = crypto.randomUUID();
+      } else {
+        existingSessionLastSeen =
+          existingSession.last_seen;
+
+        const lastSeenTime = Date.parse(
+          existingSession.last_seen,
+        );
+
+        if (
+          Number.isFinite(lastSeenTime) &&
+          nowDate.getTime() - lastSeenTime >=
+            SESSION_TIMEOUT_MS
+        ) {
+          sessionIsNew = true;
+          sessionId = crypto.randomUUID();
+        } else {
+          sessionIsNew = false;
+        }
+      }
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * 3. Create visitor profile when necessary
+     * ----------------------------------------------------------
+     *
+     * visitor_profiles keeps lifetime identity and statistics.
+     * nickname lives here, not on individual sessions.
+     */
+
+    if (!visitorProfile) {
+      const {
+        data: createdVisitor,
+        error: createVisitorError,
+      } = await admin
+        .from('visitor_profiles')
+        .insert({
+          session_id: sessionId,
+          visitor_id: visitorId,
+          nickname: null,
+          first_seen: now,
+          last_seen: now,
+          visit_count: 1,
+          pageview_count:
+            event === 'pageview' ? 1 : 0,
+          interaction_count:
+            event === 'pageview' ? 0 : 1,
+          latest_page: page,
+          latest_event: event,
+          device,
+          browser,
+          os,
+          country,
+          region,
+          city,
+          ip_encrypted: ipEncrypted,
+          ip_masked: ipLastOctetMasked,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('*')
+        .single();
+
+      if (createVisitorError || !createdVisitor) {
+        console.error(
+          '[analytics] visitor profile creation failed:',
+          createVisitorError?.message,
+          createVisitorError?.code,
+        );
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              process.env.NODE_ENV === 'development'
+                ? createVisitorError?.message ||
+                  'Visitor profile creation failed'
+                : 'Analytics unavailable',
+          },
+          { status: 500 },
+        );
+      }
+
+      visitorProfile =
+        createdVisitor as VisitorProfile;
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * 4. Create the session when this is a new visit
+     * ----------------------------------------------------------
+     */
+
+    if (sessionIsNew) {
+      const { error: sessionInsertError } =
+        await admin
+          .from('visitor_sessions')
+          .insert({
+            session_id: sessionId,
+            visitor_id: visitorId,
+            started_at: now,
+            last_seen: now,
+            device,
+            browser,
+            os,
+            country,
+            region,
+            city,
+            ip_encrypted: ipEncrypted,
+            ip_masked: ipLastOctetMasked,
+            created_at: now,
+            updated_at: now,
+          });
+
+      if (sessionInsertError) {
+        /*
+         * If another simultaneous request created the same
+         * session, the duplicate is harmless. Anything else
+         * should be surfaced.
+         */
+        if (sessionInsertError.code !== '23505') {
+          console.error(
+            '[analytics] session creation failed:',
+            sessionInsertError.message,
+            sessionInsertError.code,
+            sessionInsertError.details,
+          );
+
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                process.env.NODE_ENV === 'development'
+                  ? sessionInsertError.message
+                  : 'Analytics unavailable',
+            },
+            { status: 500 },
+          );
+        }
+      }
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * 5. Record the event
+     * ----------------------------------------------------------
+     */
+
+    const { error: eventError } = await admin
       .from('analytics_events')
       .insert({
         session_id: sessionId,
+        visitor_id: visitorId,
         page,
         event,
-        referrer,
+        referrer: cleanReferrer(
+          request.headers.get('referer'),
+        ),
         device,
         browser,
         os,
@@ -278,13 +637,13 @@ export async function POST(request: NextRequest) {
         ip_masked: ipLastOctetMasked,
       });
 
-    if (error) {
+    if (eventError) {
       console.error(
-        '[analytics] Supabase insert failed:',
-        error.message,
-        error.details,
-        error.hint,
-        error.code,
+        '[analytics] event insert failed:',
+        eventError.message,
+        eventError.details,
+        eventError.hint,
+        eventError.code,
       );
 
       return NextResponse.json(
@@ -292,89 +651,110 @@ export async function POST(request: NextRequest) {
           ok: false,
           error:
             process.env.NODE_ENV === 'development'
-              ? error.message
+              ? eventError.message
               : 'Analytics unavailable',
         },
         { status: 500 },
       );
     }
 
-    // Keep a persistent visitor profile alongside the raw event log.
-    const serverKey =
-      process.env.SUPABASE_SECRET_KEY ||
-      process.env.SUPABASE_SERVICE_ROLE_KEY;
+    /*
+     * ----------------------------------------------------------
+     * 6. Update lifetime visitor statistics
+     * ----------------------------------------------------------
+     */
 
-    if (serverKey) {
-      const admin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        serverKey,
-        {
-          auth: { persistSession: false },
-        },
-      );
+    const isPageview = event === 'pageview';
 
-      const { data: existing } = await admin
+    const nextVisitCount =
+      (visitorProfile.visit_count || 0) +
+      (visitorWasCreated || !sessionIsNew
+        ? 0
+        : 1);
+
+    const nextPageviewCount =
+      (visitorProfile.pageview_count || 0) +
+      (isPageview ? 1 : 0);
+
+    const nextInteractionCount =
+      (visitorProfile.interaction_count || 0) +
+      (isPageview ? 0 : 1);
+
+    const { error: visitorUpdateError } =
+      await admin
         .from('visitor_profiles')
-        .select(
-          'session_id,nickname,first_seen,visit_count,pageview_count,interaction_count',
-        )
-        .eq('session_id', sessionId)
-        .maybeSingle();
+        .update({
+          /*
+           * Never overwrite a manually assigned nickname.
+           */
+          nickname: visitorProfile.nickname ?? null,
+          last_seen: now,
+          visit_count: nextVisitCount,
+          pageview_count: nextPageviewCount,
+          interaction_count: nextInteractionCount,
+          latest_page: page,
+          latest_event: event,
+          device,
+          browser,
+          os,
+          country,
+          region,
+          city,
+          ip_encrypted: ipEncrypted,
+          ip_masked: ipLastOctetMasked,
+          updated_at: now,
+        })
+        .eq('visitor_id', visitorId);
 
-      const isPageview = event === 'pageview';
-
-      const next = {
-        session_id: sessionId,
-        first_seen:
-          existing?.first_seen ||
-          new Date().toISOString(),
-        last_seen: new Date().toISOString(),
-        visit_count:
-          (existing?.visit_count || 0) +
-          (existing ? 0 : 1),
-        pageview_count:
-          (existing?.pageview_count || 0) +
-          (isPageview ? 1 : 0),
-        interaction_count:
-          (existing?.interaction_count || 0) +
-          (isPageview ? 0 : 1),
-        latest_page: page,
-        latest_event: event,
-        device,
-        browser,
-        os,
-        country,
-        region,
-        city,
-        ip_encrypted: ipEncrypted,
-        ip_masked: ipLastOctetMasked,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error: profileError } =
-        await admin
-          .from('visitor_profiles')
-          .upsert(
-            {
-              ...next,
-              nickname: existing?.nickname ?? null,
-            },
-            { onConflict: 'session_id' },
-          );
-
-      if (profileError) {
-        console.error(
-          '[analytics] visitor profile update failed:',
-          profileError.message,
-          profileError.code,
-        );
-      }
+    if (visitorUpdateError) {
+      console.error(
+        '[analytics] visitor profile update failed:',
+        visitorUpdateError.message,
+        visitorUpdateError.code,
+      );
     }
 
-    // Push notifications:
-    // - Every genuinely new visitor gets a notification.
-    // - Meaningful engagement gets a notification.
-    // - Ordinary pageviews remain quiet.
+    /*
+     * ----------------------------------------------------------
+     * 7. Update the current session
+     * ----------------------------------------------------------
+     */
+
+    const { error: sessionUpdateError } =
+      await admin
+        .from('visitor_sessions')
+        .update({
+          last_seen: now,
+          device,
+          browser,
+          os,
+          country,
+          region,
+          city,
+          ip_encrypted: ipEncrypted,
+          ip_masked: ipLastOctetMasked,
+          updated_at: now,
+        })
+        .eq('session_id', sessionId)
+        .eq('visitor_id', visitorId);
+
+    if (sessionUpdateError) {
+      console.error(
+        '[analytics] session update failed:',
+        sessionUpdateError.message,
+        sessionUpdateError.code,
+      );
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * 8. Push notifications
+     * ----------------------------------------------------------
+     *
+     * Phase 5 remains untouched.
+     * Existing subscriptions still receive notifications.
+     */
+
     const meaningfulEvents = new Set([
       'contact_email',
       'contact_whatsapp',
@@ -384,11 +764,11 @@ export async function POST(request: NextRequest) {
     ]);
 
     const shouldNotify =
-      isNewVisitor ||
+      visitorWasCreated ||
       meaningfulEvents.has(event);
 
     if (shouldNotify) {
-      const pushDetails = isNewVisitor
+      const pushDetails = visitorWasCreated
         ? getPushDetails('visitor_entry')
         : getPushDetails(event);
 
@@ -410,27 +790,75 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    /*
+     * ----------------------------------------------------------
+     * 9. Persist identity/session cookies
+     * ----------------------------------------------------------
+     */
+
     const response = NextResponse.json({
       ok: true,
     });
 
-    if (!request.cookies.get('myles_visitor')) {
+    if (!hasVisitorCookie) {
       response.cookies.set(
-        'myles_visitor',
-        sessionId,
+        'myles_visitor_id',
+        visitorId,
         {
           httpOnly: true,
           sameSite: 'lax',
           secure:
             process.env.NODE_ENV === 'production',
-          maxAge: 60 * 60 * 24 * 30,
+          maxAge: 60 * 60 * 24 * 365 * 2,
+          path: '/',
+        },
+      );
+    }
+
+    /*
+     * Refresh the session cookie on every successful analytics request.
+     * This keeps an actively used browser session alive while the
+     * database timestamp remains the source of truth for the
+     * 30-minute inactivity boundary.
+     */
+    response.cookies.set(
+      'myles_session_id',
+      sessionId,
+      {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure:
+          process.env.NODE_ENV === 'production',
+        maxAge: 60 * 30,
+        path: '/',
+      },
+    );
+
+    /*
+     * Remove the old session-style visitor cookie.
+     */
+    if (request.cookies.get('myles_visitor')) {
+      response.cookies.set(
+        'myles_visitor',
+        '',
+        {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure:
+            process.env.NODE_ENV === 'production',
+          maxAge: 0,
           path: '/',
         },
       );
     }
 
     return response;
-  } catch {
+  } catch (error) {
+    console.error(
+      '[analytics] unexpected error:',
+      error,
+    );
+
     return NextResponse.json(
       { ok: false },
       { status: 500 },

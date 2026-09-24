@@ -29,7 +29,7 @@ export async function GET() {
   const result = await requireAdmin();
   if (!result.user || !result.admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await result.supabase.from('analytics_events').select('id,session_id,page,event,referrer,device,browser,os,country,region,city,ip_encrypted,created_at').gte('created_at', since).order('created_at', { ascending: false }).limit(100);
+  const { data, error } = await result.supabase.from('analytics_events').select('id,session_id,visitor_id,page,event,referrer,device,browser,os,country,region,city,ip_encrypted,ip_masked,created_at').gte('created_at', since).order('created_at', { ascending: false }).limit(100);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = (data ?? []).map(row => ({ ...row, country: decodeLocation(row.country), region: decodeLocation(row.region), city: decodeLocation(row.city), ip_full: decryptIp(row.ip_encrypted) }));
   return NextResponse.json(rows);

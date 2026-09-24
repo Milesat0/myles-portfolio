@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -9,7 +9,7 @@ import {
 import { LogOut, Plus, Pencil, Trash2, Save, ExternalLink, LayoutDashboard, BellRing, Users, Eye, MousePointerClick, Activity } from 'lucide-react';
 
 type Row = { id: string; title: string; type: string; desc: string; tags: string[]; accent: string; status: string; details: string; images: string[]; video: string | null; icon: string; sort_order: number };
-type EventRow = { id: number; session_id: string; page: string; event: string; referrer: string; device: string; browser: string; os: string; country: string; region: string; city: string; ip_masked: string | null; ip_full?: string | null; created_at: string };
+type EventRow = { id: number; session_id: string; visitor_id: string; page: string; event: string; referrer: string; device: string; browser: string; os: string; country: string; region: string; city: string; ip_masked: string | null; ip_full?: string | null; created_at: string };
 const blank: Omit<Row, 'id'> = { title:'', type:'', desc:'', tags:[], accent:'violet', status:'In development', details:'', images:[], video:null, icon:'', sort_order:99 };
 
 export default function AdminDashboard({ initialProjects, email }: { initialProjects: Row[]; email: string }) {
@@ -51,7 +51,7 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
     const newest = data[0];
     if (notify && newest && newest.id.toString() !== lastSeen && newest.event !== 'pageview') {
       if (notifications && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('Myles Portfolio', { body: `${newest.country} Â· ${newest.device} Â· ${newest.event.split('_').join(' ')}` });
+        new Notification('Myles Portfolio', { body: `${newest.country} · ${newest.device} · ${newest.event.split('_').join(' ')}` });
       }
       setLastSeen(newest.id.toString());
     }
@@ -66,7 +66,7 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
 
   const today = useMemo(() => events.filter(e => new Date(e.created_at).toDateString() === new Date().toDateString()), [events]);
   const live = useMemo(() => events.filter(e => Date.now() - new Date(e.created_at).getTime() < 5 * 60 * 1000), [events]);
-  const sessionsToday = useMemo(() => new Set(today.map(e => e.session_id)).size, [today]);
+  const visitorsToday = useMemo(() => new Set(today.map(e => e.visitor_id)).size, [today]);
   const interactions = useMemo(() => today.filter(e => e.event !== 'pageview').length, [today]);
 
   function base64ToBytes(value: string) {
@@ -151,15 +151,15 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
         {message && <div className="admin-message">{message}</div>}
 
         <div className="analytics-overview">
-          <div className="analytics-card live-card"><div><span>LIVE NOW</span><strong>{live.length ? new Set(live.map(e=>e.session_id)).size : 0}</strong></div><Activity size={20}/></div>
-          <div className="analytics-card"><div><span>VISITORS TODAY</span><strong>{sessionsToday}</strong></div><Users size={20}/></div>
+          <div className="analytics-card live-card"><div><span>LIVE NOW</span><strong>{live.length ? new Set(live.map(e=>e.visitor_id)).size : 0}</strong></div><Activity size={20}/></div>
+          <div className="analytics-card"><div><span>VISITORS TODAY</span><strong>{visitorsToday}</strong></div><Users size={20}/></div>
           <div className="analytics-card"><div><span>PAGEVIEWS TODAY</span><strong>{today.filter(e=>e.event === 'pageview').length}</strong></div><Eye size={20}/></div>
           <div className="analytics-card"><div><span>INTERACTIONS</span><strong>{interactions}</strong></div><MousePointerClick size={20}/></div>
         </div>
 
         <div className="analytics-panels">
-          <div className="admin-panel"><div className="panel-title"><strong>Live activity</strong><span>refreshes every 15s</span></div><div className="activity-list">{events.slice(0, 8).map(e => <div className="activity-row" key={e.id}><div className="activity-dot"/><div className="activity-copy"><b>{eventLabel(e.event)}</b><span>{e.country}{e.city ? ` Â· ${e.city}` : ''} Â· {e.device} Â· {e.browser} Â· from {e.referrer}</span></div><time>{new Date(e.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>)}{!events.length && <p className="admin-empty">No visitor activity yet. Open the public site in another tab to create your first event.</p>}</div></div>
-          <div className="admin-panel"><div className="panel-title"><strong>Visitors today</strong><span>privacy-conscious signals</span></div><div className="visitor-list">{Array.from(new Map<string, EventRow>(today.filter(e=>e.event==='pageview').map(e=>[e.session_id,e] as [string, EventRow])).values()).slice(0,8).map(e => <div className="visitor-row" key={e.session_id}><div className="visitor-main"><b>{e.country}{e.city ? ` Â· ${e.city}` : ''}</b><span>{e.device} Â· {e.os} Â· {e.browser}</span></div><div><b>{e.referrer}</b><span>{e.page}</span></div><div className="visitor-tech"><span>{revealedIps.has(e.id) ? (e.ip_full || e.ip_masked || 'IP unavailable') : (e.ip_masked || 'IP unavailable')}</span>{e.ip_full && <button type="button" onClick={() => toggleIp(e.id)}>{revealedIps.has(e.id) ? 'Hide' : 'Reveal'}</button>}</div></div>)}{!today.length && <p className="admin-empty">Visitor summaries will appear here once traffic arrives.</p>}</div></div>
+          <div className="admin-panel"><div className="panel-title"><strong>Live activity</strong><span>refreshes every 15s</span></div><div className="activity-list">{events.slice(0, 8).map(e => <div className="activity-row" key={e.id}><div className="activity-dot"/><div className="activity-copy"><b>{eventLabel(e.event)}</b><span>{e.country}{e.city ? ` · ${e.city}` : ''} · {e.device} · {e.browser} · from {e.referrer}</span></div><time>{new Date(e.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>)}{!events.length && <p className="admin-empty">No visitor activity yet. Open the public site in another tab to create your first event.</p>}</div></div>
+          <div className="admin-panel"><div className="panel-title"><strong>Visitors today</strong><span>privacy-conscious signals</span></div><div className="visitor-list">{Array.from(new Map<string, EventRow>(today.filter(e=>e.event==='pageview').map(e=>[e.visitor_id,e] as [string, EventRow])).values()).slice(0,8).map(e => <div className="visitor-row" key={e.visitor_id}><div className="visitor-main"><b>{e.country}{e.city ? ` · ${e.city}` : ''}</b><span>{e.device} · {e.os} · {e.browser}</span></div><div><b>{e.referrer}</b><span>{e.page}</span></div><div className="visitor-tech"><span>{revealedIps.has(e.id) ? (e.ip_full || e.ip_masked || 'IP unavailable') : (e.ip_masked || 'IP unavailable')}</span>{e.ip_full && <button type="button" onClick={() => toggleIp(e.id)}>{revealedIps.has(e.id) ? 'Hide' : 'Reveal'}</button>}</div></div>)}{!today.length && <p className="admin-empty">Visitor summaries will appear here once traffic arrives.</p>}</div></div>
         </div>
 
         <div className="admin-heading subheading"><div><span className="eyebrow">02 / CONTENT</span><h2>Projects</h2><p>Edit the projects shown on the public portfolio without touching source code.</p></div></div>
@@ -174,14 +174,11 @@ export default function AdminDashboard({ initialProjects, email }: { initialProj
               <label className="wide">Details<textarea rows={5} value={form.details} onChange={e=>set('details',e.target.value)}/></label><label className="wide">Icon URL<input value={form.icon} onChange={e=>set('icon',e.target.value)} placeholder="/images/icons/project.png"/></label>
               <label className="wide">Image URLs <span className="hint">one per line</span><textarea rows={4} value={form.images} onChange={e=>set('images',e.target.value)} placeholder="/images/project-01.png"/></label><label className="wide">Demo video URL <span className="hint">optional</span><input value={form.video || ''} onChange={e=>set('video',e.target.value)} placeholder="/images/project-demo.mp4"/></label>
             </div>
-            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy}><Save size={16}/>{busy?'Savingâ€¦':'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
+            <div className="editor-actions"><button className="admin-primary" onClick={save} disabled={busy}><Save size={16}/>{busy ? 'Saving…' : 'Save project'}</button>{editing && <button className="admin-secondary" onClick={startNew}>Cancel</button>}</div>
           </div>
         </div>
       </section>
     </div>
   </main>;
 }
-
-
-
 
